@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/surf-report",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/surf-report",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}
