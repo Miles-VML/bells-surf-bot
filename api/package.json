@@ -1,6 +1,0 @@
-{
-  "name": "bells-surf-bot",
-  "version": "1.0.0",
-  "description": "Twice-daily Bells Beach surf conditions posted to Discord via Stormglass API",
-  "private": true
-}
