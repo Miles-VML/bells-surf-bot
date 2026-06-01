@@ -120,7 +120,7 @@ module.exports = async function handler(req, res) {
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
   const surf     = rating(waveH, waveP);
 
-  const localTime = new Date(closest.time).toLocaleString("en-AU", {
+  const localTime = new Date(now).toLocaleString("en-AU", {
     timeZone: "Australia/Melbourne",
     hour: "2-digit", minute: "2-digit",
     weekday: "short", day: "numeric", month: "short"
