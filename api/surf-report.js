@@ -23,6 +23,16 @@ function toKj(waveHeight, wavePeriod) {
 function rating(waveHeight, wavePeriod) {
   const h = waveHeight ?? 0;
   const p = wavePeriod ?? 0;
+  if (h >= 2.0 && p >= 12) return "🔥";
+  if (h >= 1.5 && p >= 10) return "✅";
+  if (h >= 1.0 && p >= 8)  return "👌";
+  if (h >= 0.5)             return "😐";
+  return "🪨";
+}
+
+function ratingLabel(waveHeight, wavePeriod) {
+  const h = waveHeight ?? 0;
+  const p = wavePeriod ?? 0;
   if (h >= 2.0 && p >= 12) return "🔥 Firing";
   if (h >= 1.5 && p >= 10) return "✅ Good";
   if (h >= 1.0 && p >= 8)  return "👌 Decent";
@@ -30,12 +40,46 @@ function rating(waveHeight, wavePeriod) {
   return "🪨 Flat";
 }
 
+function getMorningHour(hours, targetDate) {
+  const target = new Date(targetDate);
+  target.setUTCHours(21, 0, 0, 0);
+  target.setDate(target.getDate() - 1);
+  return hours.reduce((best, h) => {
+    const diff = Math.abs(new Date(h.time) - target);
+    return diff < Math.abs(new Date(best.time) - target) ? h : best;
+  }, hours[0]);
+}
+
+function buildThreeDaySummary(hours, now) {
+  const lines = [];
+  for (let d = 1; d <= 3; d++) {
+    const targetDate = new Date(now);
+    targetDate.setDate(targetDate.getDate() + d);
+    const h = getMorningHour(hours, targetDate);
+    if (!h) continue;
+
+    const wH = r1(pick(h.waveHeight));
+    const wP = pick(h.wavePeriod) != null ? Math.round(pick(h.wavePeriod)) : null;
+    const wKts = pick(h.windSpeed) != null ? Math.round(pick(h.windSpeed) * 1.944) : null;
+    const wWindDir = degreesToCompass(pick(h.windDirection));
+    const emoji = rating(wH, wP);
+
+    const dayLabel = new Date(h.time).toLocaleDateString("en-AU", {
+      timeZone: "Australia/Melbourne",
+      weekday: "short", day: "numeric", month: "short"
+    });
+
+    lines.push(`${emoji} **${dayLabel}** — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKts ?? "—"}kts ${wWindDir}`);
+  }
+  return lines.join("\n");
+}
+
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, windDir, waterT, surf, localTime, kj } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, windDir, waterT, surf, localTime, kj, forecast } = conditions;
 
   const prompt = `You are the voice of Rip Curl at Bells Beach. Rip Curl was founded at Bells Beach. This is home. You know Bells better than anyone on earth.
 
-Write a short, punchy surf conditions summary for this morning's report. 2-4 sentences max.
+Write a short, punchy surf conditions summary. 2-4 sentences max.
 
 Voice: irreverent, knowledgeable, trusted local. Dry humour. Never corporate. Surf-native language. Like a mate who's surfed Bells for 30 years texting you whether to bother paddling out.
 
@@ -56,7 +100,10 @@ Current conditions:
 - Time: ${localTime}
 - Overall rating: ${surf}
 
-Be specific to these actual conditions. Call out which part of the break might be working (or not). Recommend gear if water temp warrants it. If it's worth paddling out, say where. If it's not worth it, be honest but still Bells-proud about it. Never make up conditions that aren't there.
+3-day morning outlook:
+${forecast}
+
+Be specific to these actual conditions. Call out which part of the break might be working (or not). Recommend gear if water temp warrants it. If the forecast shows better surf coming, mention it in one sentence — give people a reason to check back. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
 
 Return only the summary text. No labels, no preamble.`;
 
@@ -70,7 +117,7 @@ Return only the summary text. No labels, no preamble.`;
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
+        max_tokens: 250,
         messages: [{ role: "user", content: prompt }]
       })
     });
@@ -91,7 +138,8 @@ module.exports = async function handler(req, res) {
 
   const now = new Date();
   const start = new Date(now.getTime() - 60 * 60 * 1000);
-  const end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
+
   const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,waterTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
@@ -125,7 +173,7 @@ module.exports = async function handler(req, res) {
   const waterT   = r1(pick(closest.waterTemperature));
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
   const kj       = toKj(waveH, waveP);
-  const surf     = rating(waveH, waveP);
+  const surf     = ratingLabel(waveH, waveP);
 
   const localTime = new Date(now).toLocaleString("en-AU", {
     timeZone: "Australia/Melbourne",
@@ -133,9 +181,12 @@ module.exports = async function handler(req, res) {
     weekday: "short", day: "numeric", month: "short"
   });
 
+  const forecastSummary = buildThreeDaySummary(hours, now);
+
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
-    windKts, windDir, waterT, surf, localTime, kj
+    windKts, windDir, waterT, surf, localTime, kj,
+    forecast: forecastSummary
   });
 
   const fields = [
@@ -150,106 +201,8 @@ module.exports = async function handler(req, res) {
     fields.push({ name: "🤙 The Rip Curl Take", value: ripCurlTake, inline: false });
   }
 
-  const embed = {
-    title: `🌊 Bells Beach — ${surf}`,
-    color: 0x00b4d8,
-    description: `Conditions at ${localTime} (AEST)`,
-    fields,
-    footer: { text: "Stormglass API • Bells Beach, VIC 🤙" },
-    timestamp: new Date().toISOString()
-  };
-
-  try {
-    const discordRes = await fetch(DISCORD_WEBHOOK, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ embeds: [embed] })
-    });
-    if (!discordRes.ok) {
-      const err = await discordRes.text();
-      return res.status(502).json({ error: "Discord webhook failed", detail: err });
-    }
-  } catch (e) {
-    return res.status(502).json({ error: "Failed to post to Discord", detail: e.message });
-  }
-
-  return res.status(200).json({ ok: true, surfRating: surf, dataTime: closest.time });
-};        messages: [{ role: "user", content: prompt }]
-      })
-    });
-    const data = await res.json();
-    return data.content?.[0]?.text ?? null;
-  } catch (e) {
-    return null;
-  }
-}
-
-module.exports = async function handler(req, res) {
-  const STORMGLASS_KEY = process.env.STORMGLASS_API_KEY;
-  const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
-
-  if (!STORMGLASS_KEY || !DISCORD_WEBHOOK) {
-    return res.status(500).json({ error: "Missing environment variables" });
-  }
-
-  const now = new Date();
-  const start = new Date(now.getTime() - 60 * 60 * 1000);
-  const end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,waterTemperature";
-  const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
-
-  let sgData;
-  try {
-    const sgRes = await fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } });
-    if (!sgRes.ok) {
-      const err = await sgRes.text();
-      return res.status(502).json({ error: `Stormglass error: ${sgRes.status}`, detail: err });
-    }
-    sgData = await sgRes.json();
-  } catch (e) {
-    return res.status(502).json({ error: "Failed to fetch Stormglass", detail: e.message });
-  }
-
-  const hours = sgData.hours ?? [];
-  if (!hours.length) return res.status(502).json({ error: "No data from Stormglass" });
-
-  const closest = hours.reduce((best, h) =>
-    Math.abs(new Date(h.time) - now) < Math.abs(new Date(best.time) - now) ? h : best
-  , hours[0]);
-
-  const waveH    = r1(pick(closest.waveHeight));
-  const waveP    = r1(pick(closest.wavePeriod));
-  const waveDir  = degreesToCompass(pick(closest.waveDirection));
-  const swellH   = r1(pick(closest.swellHeight));
-  const swellP   = r1(pick(closest.swellPeriod));
-  const swellDir = degreesToCompass(pick(closest.swellDirection));
-  const windSpd  = r1(pick(closest.windSpeed));
-  const windDir  = degreesToCompass(pick(closest.windDirection));
-  const waterT   = r1(pick(closest.waterTemperature));
-  const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
-  const surf     = rating(waveH, waveP);
-
-  const localTime = new Date(now).toLocaleString("en-AU", {
-    timeZone: "Australia/Melbourne",
-    hour: "2-digit", minute: "2-digit",
-    weekday: "short", day: "numeric", month: "short"
-  });
-
-  // Get Rip Curl AI summary
-  const ripCurlTake = await getRipCurlSummary({
-    waveH, waveP, waveDir, swellH, swellP, swellDir,
-    windKts, windDir, waterT, surf, localTime
-  });
-
-  const fields = [
-    { name: "🌊 Waves",        value: `**${waveH ?? "—"}m** @ ${waveP ?? "—"}s | ${waveDir}`, inline: true },
-    { name: "🌀 Swell",        value: `**${swellH ?? "—"}m** @ ${swellP ?? "—"}s | ${swellDir}`, inline: true },
-    { name: "💨 Wind",         value: `**${windKts ?? "—"}kts** | ${windDir}`, inline: true },
-    { name: "🌡️ Water Temp",  value: waterT != null ? `${waterT}°C` : "—", inline: true },
-  ];
-
-  if (ripCurlTake) {
-    fields.push({ name: "🤙 The Rip Curl Take", value: ripCurlTake, inline: false });
+  if (forecastSummary) {
+    fields.push({ name: "📅 Next 3 Mornings (7am)", value: forecastSummary, inline: false });
   }
 
   const embed = {
