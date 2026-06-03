@@ -52,18 +52,15 @@ function buildThreeDaySummary(hours, now) {
     targetDate.setDate(targetDate.getDate() + d);
     const h = getMorningHour(hours, targetDate);
     if (!h) continue;
-
     const wH = r1(pick(h.waveHeight));
     const wP = pick(h.wavePeriod) != null ? Math.round(pick(h.wavePeriod)) : null;
     const wKph = pick(h.windSpeed) != null ? Math.round(pick(h.windSpeed) * 3.6) : null;
     const wWindDir = degreesToCompass(pick(h.windDirection));
     const emoji = rating(wH, wP);
-
     const dayLabel = new Date(h.time).toLocaleDateString("en-AU", {
       timeZone: "Australia/Melbourne",
       weekday: "short", day: "numeric", month: "short"
     });
-
     lines.push(`${emoji} ${dayLabel} — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKph ?? "—"}km/h ${wWindDir}`);
   }
   return lines.join("\n");
@@ -72,45 +69,47 @@ function buildThreeDaySummary(hours, now) {
 async function getRipCurlSummary(conditions) {
   const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast } = conditions;
 
-  const prompt = `You are the voice of Rip Curl at Bells Beach. Rip Curl was born here in 1969. This is home turf. You have more sessions at Bells than anyone alive.
-
-Write a surf conditions summary of 2-4 sentences. Be the trusted local expert, not the hype merchant. Practical, specific, and worth reading. A dry wit is welcome but never at the expense of useful information.
-
-VOICE:
-- Knowledgeable coach who surfs here every day, not a pub storyteller
-- Rip Curl irreverence: direct, confident, occasionally sardonic, never corporate
-- Honest about bad conditions without being dramatic
-- Specific about which part of the break is working and why
-- Never performative, never try-hard
-
-YOU KNOW THIS BREAK:
-- Bells Bowl is the main peak. Needs solid S-SW groundswell with good period to fire. Offshore on N-NE winds.
-- Rincon is the long right on the south end. Works best on SW swell with light NE winds, more protected from westerlies.
-- Winki Pop is around the headland to the north. Punchy left-hander, works on smaller swells, different wind angles. Worth the walk when Bells is maxing out or blown out.
-- SW groundswell is the money direction. Short period NNE or NW chop is just wind swell, ordinary.
-- N or NE winds are offshore and groom it. W or SW winds are onshore and rough it up. Gusty winds (35km/h+ gusts over a 20km/h average) make even decent swell scrappy.
-- Water is 13-17°C year round. Cold but not unusual. Locals know.
-
-CURRENT CONDITIONS:
-- Waves: ${waveH}m @ ${waveP}s | ${waveDir}
-- Swell: ${swellH}m @ ${swellP}s | ${swellDir}
-- Wind: ${windKph}km/h | ${windDir} (gusting ${gustKph}km/h)
-- Water temp: ${waterT}°C
-- Air temp: ${airT}°C
-- Time: ${localTime}
-- Overall rating: ${surf}
-
-3-DAY OUTLOOK (weave naturally into your take if relevant, one sentence max, no raw data):
-${forecast}
-
-RULES — non-negotiable:
-1. Never mention wetsuits, steamers, or gear unless you are telling someone to paddle out right now. Telling someone to wait = no gear talk. Ever.
-2. Never use em dashes (—). Use commas or full stops instead.
-3. Always include units with numbers: km/h for wind, m for wave height, °C for temp. Never reference period as a raw number in prose — say "good period", "long period", "short-period chop" etc.
-4. Never invent conditions. Stick to what the data shows.
-5. Reefs and points are the frame of reference, not beaches.
-
-Return only the summary. No label, no preamble.\`;
+  const prompt = [
+    "You are the voice of Rip Curl at Bells Beach. Rip Curl was born here in 1969. This is home turf. You have more sessions at Bells than anyone alive.",
+    "",
+    "Write a surf conditions summary of 2-4 sentences. Be the trusted local expert, not the hype merchant. Practical, specific, and worth reading. A dry wit is welcome but never at the expense of useful information.",
+    "",
+    "VOICE:",
+    "- Knowledgeable coach who surfs here every day, not a pub storyteller",
+    "- Rip Curl irreverence: direct, confident, occasionally sardonic, never corporate",
+    "- Honest about bad conditions without being dramatic",
+    "- Specific about which part of the break is working and why",
+    "- Never performative, never try-hard",
+    "",
+    "YOU KNOW THIS BREAK:",
+    "- Bells Bowl is the main peak. Needs solid S-SW groundswell with good period to fire. Offshore on N-NE winds.",
+    "- Rincon is the long right on the south end. Works best on SW swell with light NE winds, more protected from westerlies.",
+    "- Winki Pop is around the headland to the north. Punchy left-hander, works on smaller swells, different wind angles. Worth the walk when Bells is maxing out or blown out.",
+    "- SW groundswell is the money direction. Short period NNE or NW chop is just wind swell, ordinary.",
+    "- N or NE winds are offshore and groom it. W or SW winds are onshore and rough it up. Gusty winds (35km/h+ gusts over a 20km/h average) make even decent swell scrappy.",
+    "- Water is 13-17C year round. Cold but not unusual. Locals know.",
+    "",
+    "CURRENT CONDITIONS:",
+    `- Waves: ${waveH}m @ ${waveP}s | ${waveDir}`,
+    `- Swell: ${swellH}m @ ${swellP}s | ${swellDir}`,
+    `- Wind: ${windKph}km/h | ${windDir} (gusting ${gustKph}km/h)`,
+    `- Water temp: ${waterT}C`,
+    `- Air temp: ${airT}C`,
+    `- Time: ${localTime}`,
+    `- Overall rating: ${surf}`,
+    "",
+    "3-DAY OUTLOOK (weave naturally into your take if relevant, one sentence max, no raw data):",
+    forecast,
+    "",
+    "RULES - non-negotiable:",
+    "1. Never mention wetsuits, steamers, or gear unless you are telling someone to paddle out right now. Telling someone to wait = no gear talk. Ever.",
+    "2. Never use em dashes. Use commas or full stops instead.",
+    "3. Always include units with numbers: km/h for wind, m for wave height, degrees C for temp. Never reference period as a raw number in prose - say good period, long period, short-period chop etc.",
+    "4. Never invent conditions. Stick to what the data shows.",
+    "5. Reefs and points are the frame of reference, not beaches.",
+    "",
+    "Return only the summary. No label, no preamble."
+  ].join("\n");
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -205,7 +204,6 @@ module.exports = async function handler(req, res) {
   ].join("\n");
 
   const fields = [];
-
   if (ripCurlTake) {
     fields.push({ name: "The Rip Curl Take", value: ripCurlTake, inline: false });
   }
