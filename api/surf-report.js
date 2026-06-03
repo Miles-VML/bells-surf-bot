@@ -195,7 +195,6 @@ module.exports = async function handler(req, res) {
     `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
     `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir}`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
-    `⚡ **Energy** — ${kj ?? "—"}kJ`,
   ].join("\n");
 
   const fields = [];
