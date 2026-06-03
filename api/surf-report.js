@@ -15,15 +15,6 @@ function r1(n) {
   return n != null ? Math.round(n * 10) / 10 : null;
 }
 
-function uvLabel(uv) {
-  if (uv == null) return "—";
-  if (uv <= 2)  return `${uv} Low`;
-  if (uv <= 5)  return `${uv} Moderate`;
-  if (uv <= 7)  return `${uv} High`;
-  if (uv <= 10) return `${uv} Very High`;
-  return `${uv} Extreme`;
-}
-
 function rating(waveHeight, wavePeriod) {
   const h = waveHeight ?? 0;
   const p = wavePeriod ?? 0;
@@ -145,7 +136,7 @@ module.exports = async function handler(req, res) {
   const start = new Date(now.getTime() - 60 * 60 * 1000);
   const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
 
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature,uvIndex";
+  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
   let sgData;
@@ -178,8 +169,6 @@ module.exports = async function handler(req, res) {
   const gustSpd  = pick(closest.gust);
   const waterT   = r1(pick(closest.waterTemperature));
   const airT     = r1(pick(closest.airTemperature));
-  const uvRaw    = pick(closest.uvIndex);
-  const uv       = uvRaw != null ? Math.round(uvRaw) : null;
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
   const gustKts  = gustSpd != null ? r1(gustSpd * 1.944) : null;
   const surf     = ratingLabel(waveH, waveP);
@@ -204,7 +193,6 @@ module.exports = async function handler(req, res) {
     `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir} (gusts ${gustKts ?? "—"}kts)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
-    `☀️ **UV** — ${uvLabel(uv)}`,
   ].join("\n");
 
   const fields = [];
