@@ -69,7 +69,7 @@ function buildThreeDaySummary(hours, now) {
       weekday: "short", day: "numeric", month: "short"
     });
 
-    lines.push(`${emoji} **${dayLabel}** — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKts ?? "—"}kts ${wWindDir}`);
+    lines.push(`${emoji} ${dayLabel} — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKts ?? "—"}kts ${wWindDir}`);
   }
   return lines.join("\n");
 }
@@ -100,10 +100,10 @@ Current conditions:
 - Time: ${localTime}
 - Overall rating: ${surf}
 
-3-day morning outlook:
+3-day morning outlook (for context only — do not display the raw data, just weave the trend into your take naturally):
 ${forecast}
 
-Be specific to these actual conditions. Call out which part of the break might be working (or not). Recommend gear if water temp warrants it. If the forecast shows better surf coming, mention it in one sentence — give people a reason to check back. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
+Be specific to these actual conditions. Call out which part of the break might be working (or not). Recommend gear if water temp warrants it. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
 
 Return only the summary text. No labels, no preamble.`;
 
@@ -181,6 +181,7 @@ module.exports = async function handler(req, res) {
     weekday: "short", day: "numeric", month: "short"
   });
 
+  // Build forecast for AI context only — not displayed
   const forecastSummary = buildThreeDaySummary(hours, now);
 
   const ripCurlTake = await getRipCurlSummary({
@@ -189,26 +190,24 @@ module.exports = async function handler(req, res) {
     forecast: forecastSummary
   });
 
-  const fields = [
-    { name: "🌊 Waves",       value: `**${waveH ?? "—"}m** @ ${waveP ?? "—"}s | ${waveDir}`, inline: true },
-    { name: "🌀 Swell",       value: `**${swellH ?? "—"}m** @ ${swellP ?? "—"}s | ${swellDir}`, inline: true },
-    { name: "💨 Wind",        value: `**${windKts ?? "—"}kts** | ${windDir}`, inline: true },
-    { name: "🌡️ Water Temp", value: waterT != null ? `${waterT}°C` : "—", inline: true },
-    { name: "⚡ Energy",      value: kj != null ? `${kj}kJ` : "—", inline: true },
-  ];
+  const conditionsBlock = [
+    `🌊 **Waves** — ${waveH ?? "—"}m @ ${waveP ?? "—"}s | ${waveDir}`,
+    `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
+    `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir}`,
+    `🌡️ **Water** — ${waterT ?? "—"}°C`,
+    `⚡ **Energy** — ${kj ?? "—"}kJ`,
+  ].join("\n");
+
+  const fields = [];
 
   if (ripCurlTake) {
     fields.push({ name: "🤙 The Rip Curl Take", value: ripCurlTake, inline: false });
   }
 
-  if (forecastSummary) {
-    fields.push({ name: "📅 Next 3 Mornings (7am)", value: forecastSummary, inline: false });
-  }
-
   const embed = {
     title: `🌊 Bells Beach — ${surf}`,
     color: 0x00b4d8,
-    description: `Conditions at ${localTime} (AEST)`,
+    description: `Conditions at ${localTime} (AEST)\n\n${conditionsBlock}`,
     fields,
     footer: { text: "Stormglass API • Bells Beach, VIC 🤙" },
     timestamp: new Date().toISOString()
