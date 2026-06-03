@@ -15,6 +15,15 @@ function r1(n) {
   return n != null ? Math.round(n * 10) / 10 : null;
 }
 
+function uvLabel(uv) {
+  if (uv == null) return "—";
+  if (uv <= 2)  return `${uv} Low`;
+  if (uv <= 5)  return `${uv} Moderate`;
+  if (uv <= 7)  return `${uv} High`;
+  if (uv <= 10) return `${uv} Very High`;
+  return `${uv} Extreme`;
+}
+
 function rating(waveHeight, wavePeriod) {
   const h = waveHeight ?? 0;
   const p = wavePeriod ?? 0;
@@ -70,7 +79,7 @@ function buildThreeDaySummary(hours, now) {
 }
 
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, windDir, waterT, surf, localTime, forecast } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, gustKts, windDir, waterT, airT, surf, localTime, forecast } = conditions;
 
   const prompt = `You are the voice of Rip Curl at Bells Beach. Rip Curl was founded at Bells Beach. This is home. You know Bells better than anyone on earth.
 
@@ -85,19 +94,21 @@ You know the break intimately:
 - Water temps at Bells sit around 13-17°C year round. Under 15°C means a good steamer (4/3 minimum). Under 13°C means booties, gloves, hood — the works.
 - SW swells are the money direction for Bells. NNE waves with short period (under 8s) means wind swell — usually bumpy and ordinary.
 - Light N or NE winds are offshore at Bells and groom it beautifully. S or SW winds are onshore and rough it up.
+- High gusts (20kts+) relative to average wind speed mean gusty, unpredictable conditions even if the average looks manageable.
 
 Current conditions:
 - Waves: ${waveH}m @ ${waveP}s | ${waveDir}
 - Swell: ${swellH}m @ ${swellP}s | ${swellDir}
-- Wind: ${windKts}kts | ${windDir}
+- Wind: ${windKts}kts | ${windDir} (gusting ${gustKts}kts)
 - Water temp: ${waterT}°C
+- Air temp: ${airT}°C
 - Time: ${localTime}
 - Overall rating: ${surf}
 
 3-day morning outlook (for context only — do not display the raw data, just weave the trend into your take naturally):
 ${forecast}
 
-Be specific to these actual conditions. Call out which part of the break might be working (or not). Only mention gear if you're recommending someone actually paddle out — never suggest what to wear in the same breath as telling them to stay home. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
+Be specific to these actual conditions. Call out which part of the break might be working (or not). Only mention gear if you're recommending someone actually paddle out — never suggest what to wear in the same breath as telling them to stay home. If gusts are significantly higher than average wind, mention it. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
 
 Return only the summary text. No labels, no preamble.`;
 
@@ -134,7 +145,7 @@ module.exports = async function handler(req, res) {
   const start = new Date(now.getTime() - 60 * 60 * 1000);
   const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
 
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,waterTemperature";
+  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,windGust,waterTemperature,airTemperature,uvIndex";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
   let sgData;
@@ -164,8 +175,13 @@ module.exports = async function handler(req, res) {
   const swellDir = degreesToCompass(pick(closest.swellDirection));
   const windSpd  = r1(pick(closest.windSpeed));
   const windDir  = degreesToCompass(pick(closest.windDirection));
+  const gustSpd  = pick(closest.windGust);
   const waterT   = r1(pick(closest.waterTemperature));
+  const airT     = r1(pick(closest.airTemperature));
+  const uvRaw    = pick(closest.uvIndex);
+  const uv       = uvRaw != null ? Math.round(uvRaw) : null;
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
+  const gustKts  = gustSpd != null ? r1(gustSpd * 1.944) : null;
   const surf     = ratingLabel(waveH, waveP);
 
   const localTime = new Date(now).toLocaleString("en-AU", {
@@ -178,15 +194,17 @@ module.exports = async function handler(req, res) {
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
-    windKts, windDir, waterT, surf, localTime,
+    windKts, gustKts, windDir, waterT, airT, surf, localTime,
     forecast: forecastSummary
   });
 
   const conditionsBlock = [
     `🌊 **Waves** — ${waveH ?? "—"}m @ ${waveP ?? "—"}s | ${waveDir}`,
     `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
-    `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir}`,
+    `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir} (gusts ${gustKts ?? "—"}kts)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
+    `🌤️ **Air** — ${airT ?? "—"}°C`,
+    `☀️ **UV** — ${uvLabel(uv)}`,
   ].join("\n");
 
   const fields = [];
