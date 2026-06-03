@@ -55,7 +55,7 @@ function buildThreeDaySummary(hours, now) {
 
     const wH = r1(pick(h.waveHeight));
     const wP = pick(h.wavePeriod) != null ? Math.round(pick(h.wavePeriod)) : null;
-    const wKts = pick(h.windSpeed) != null ? Math.round(pick(h.windSpeed) * 1.944) : null;
+    const wKph = pick(h.windSpeed) != null ? Math.round(pick(h.windSpeed) * 3.6) : null;
     const wWindDir = degreesToCompass(pick(h.windDirection));
     const emoji = rating(wH, wP);
 
@@ -64,13 +64,13 @@ function buildThreeDaySummary(hours, now) {
       weekday: "short", day: "numeric", month: "short"
     });
 
-    lines.push(`${emoji} ${dayLabel} — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKts ?? "—"}kts ${wWindDir}`);
+    lines.push(`${emoji} ${dayLabel} — ${wH ?? "—"}m @ ${wP ?? "—"}s | Wind: ${wKph ?? "—"}km/h ${wWindDir}`);
   }
   return lines.join("\n");
 }
 
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, gustKts, windDir, waterT, airT, surf, localTime, forecast } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast } = conditions;
 
   const prompt = `You are the voice of Rip Curl at Bells Beach. Rip Curl was founded at Bells Beach. This is home. You know Bells better than anyone on earth.
 
@@ -85,12 +85,12 @@ You know the break intimately:
 - Water temps at Bells sit around 13-17°C year round. Under 15°C means a good steamer (4/3 minimum). Under 13°C means booties, gloves, hood — the works.
 - SW swells are the money direction for Bells. NNE waves with short period (under 8s) means wind swell — usually bumpy and ordinary.
 - Light N or NE winds are offshore at Bells and groom it beautifully. S or SW winds are onshore and rough it up.
-- High gusts (20kts+) relative to average wind speed mean gusty, unpredictable conditions even if the average looks manageable.
+- High gusts (35km/h+) relative to average wind speed mean gusty, unpredictable conditions even if the average looks manageable.
 
 Current conditions:
 - Waves: ${waveH}m @ ${waveP}s | ${waveDir}
 - Swell: ${swellH}m @ ${swellP}s | ${swellDir}
-- Wind: ${windKts}kts | ${windDir} (gusting ${gustKts}kts)
+- Wind: ${windKph}km/h | ${windDir} (gusting ${gustKph}km/h)
 - Water temp: ${waterT}°C
 - Air temp: ${airT}°C
 - Time: ${localTime}
@@ -168,13 +168,13 @@ module.exports = async function handler(req, res) {
   const swellH   = r1(pick(closest.swellHeight));
   const swellP   = pick(closest.swellPeriod) != null ? Math.round(pick(closest.swellPeriod)) : null;
   const swellDir = degreesToCompass(pick(closest.swellDirection));
-  const windSpd  = r1(pick(closest.windSpeed));
+  const windSpd  = pick(closest.windSpeed);
   const windDir  = degreesToCompass(pick(closest.windDirection));
   const gustSpd  = pick(closest.gust);
   const waterT   = r1(pick(closest.waterTemperature));
   const airT     = r1(pick(closest.airTemperature));
-  const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
-  const gustKts  = gustSpd != null ? r1(gustSpd * 1.944) : null;
+  const windKph  = windSpd != null ? Math.round(windSpd * 3.6) : null;
+  const gustKph  = gustSpd != null ? Math.round(gustSpd * 3.6) : null;
   const surf     = ratingLabel(waveH, waveP);
 
   const localTime = new Date(now).toLocaleString("en-AU", {
@@ -187,14 +187,14 @@ module.exports = async function handler(req, res) {
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
-    windKts, gustKts, windDir, waterT, airT, surf, localTime,
+    windKph, gustKph, windDir, waterT, airT, surf, localTime,
     forecast: forecastSummary
   });
 
   const conditionsBlock = [
     `🌊 **Waves** — ${waveH ?? "—"}m @ ${waveP ?? "—"}s | ${waveDir}`,
     `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
-    `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir} (gusts ${gustKts ?? "—"}kts)`,
+    `💨 **Wind** — ${windKph ?? "—"}km/h | ${windDir} (gusts ${gustKph ?? "—"}km/h)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
   ].join("\n");
