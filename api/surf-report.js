@@ -145,7 +145,7 @@ module.exports = async function handler(req, res) {
   const start = new Date(now.getTime() - 60 * 60 * 1000);
   const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
 
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,windGust,waterTemperature,airTemperature,uvIndex";
+  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature,uvIndex";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
   let sgData;
@@ -175,7 +175,7 @@ module.exports = async function handler(req, res) {
   const swellDir = degreesToCompass(pick(closest.swellDirection));
   const windSpd  = r1(pick(closest.windSpeed));
   const windDir  = degreesToCompass(pick(closest.windDirection));
-  const gustSpd  = pick(closest.windGust);
+  const gustSpd  = pick(closest.gust);
   const waterT   = r1(pick(closest.waterTemperature));
   const airT     = r1(pick(closest.airTemperature));
   const uvRaw    = pick(closest.uvIndex);
