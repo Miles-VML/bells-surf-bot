@@ -15,11 +15,6 @@ function r1(n) {
   return n != null ? Math.round(n * 10) / 10 : null;
 }
 
-function toKj(waveHeight, wavePeriod) {
-  if (waveHeight == null || wavePeriod == null) return null;
-  return Math.round(waveHeight * waveHeight * wavePeriod * 0.5);
-}
-
 function rating(waveHeight, wavePeriod) {
   const h = waveHeight ?? 0;
   const p = wavePeriod ?? 0;
@@ -75,7 +70,7 @@ function buildThreeDaySummary(hours, now) {
 }
 
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, windDir, waterT, surf, localTime, kj, forecast } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKts, windDir, waterT, surf, localTime, forecast } = conditions;
 
   const prompt = `You are the voice of Rip Curl at Bells Beach. Rip Curl was founded at Bells Beach. This is home. You know Bells better than anyone on earth.
 
@@ -96,7 +91,6 @@ Current conditions:
 - Swell: ${swellH}m @ ${swellP}s | ${swellDir}
 - Wind: ${windKts}kts | ${windDir}
 - Water temp: ${waterT}°C
-- Wave energy: ${kj}kJ
 - Time: ${localTime}
 - Overall rating: ${surf}
 
@@ -172,7 +166,6 @@ module.exports = async function handler(req, res) {
   const windDir  = degreesToCompass(pick(closest.windDirection));
   const waterT   = r1(pick(closest.waterTemperature));
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
-  const kj       = toKj(waveH, waveP);
   const surf     = ratingLabel(waveH, waveP);
 
   const localTime = new Date(now).toLocaleString("en-AU", {
@@ -181,12 +174,11 @@ module.exports = async function handler(req, res) {
     weekday: "short", day: "numeric", month: "short"
   });
 
-  // Build forecast for AI context only — not displayed
   const forecastSummary = buildThreeDaySummary(hours, now);
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
-    windKts, windDir, waterT, surf, localTime, kj,
+    windKts, windDir, waterT, surf, localTime,
     forecast: forecastSummary
   });
 
