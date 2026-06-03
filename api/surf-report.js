@@ -66,8 +66,87 @@ function buildThreeDaySummary(hours, now) {
   return lines.join("\n");
 }
 
+function buildTideSummary(extremes, now) {
+  if (!extremes || !extremes.length) return null;
+
+  // Find the two nearest upcoming extremes
+  const upcoming = extremes
+    .filter(e => new Date(e.time) > now)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))
+    .slice(0, 2);
+
+  if (!upcoming.length) return null;
+
+  // Find the most recent past extreme to determine current direction
+  const past = extremes
+    .filter(e => new Date(e.time) <= now)
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  const lastExtreme = past[0] ?? null;
+  const nextExtreme = upcoming[0];
+
+  // Determine if tide is incoming or outgoing
+  let direction = null;
+  if (lastExtreme) {
+    direction = nextExtreme.type === "high" ? "Incoming" : "Outgoing";
+  }
+
+  // Format next extreme time in AEST
+  const nextTime = new Date(nextExtreme.time).toLocaleTimeString("en-AU", {
+    timeZone: "Australia/Melbourne",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true
+  });
+
+  const nextType = nextExtreme.type === "high" ? "High" : "Low";
+  const nextHeight = nextExtreme.height != null ? `${Math.round(nextExtreme.height * 10) / 10}m` : "";
+
+  let tideStr = direction ? `${direction}, ` : "";
+  tideStr += `${nextType} ${nextHeight} at ${nextTime}`;
+
+  // Add second extreme if it's today
+  if (upcoming[1]) {
+    const second = upcoming[1];
+    const secondTime = new Date(second.time).toLocaleTimeString("en-AU", {
+      timeZone: "Australia/Melbourne",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+    const secondType = second.type === "high" ? "High" : "Low";
+    const secondHeight = second.height != null ? `${Math.round(second.height * 10) / 10}m` : "";
+
+    // Only show second if within 12 hours
+    const hoursDiff = (new Date(second.time) - now) / (1000 * 60 * 60);
+    if (hoursDiff <= 12) {
+      tideStr += `, then ${secondType} ${secondHeight} at ${secondTime}`;
+    }
+  }
+
+  return tideStr;
+}
+
+async function fetchTides(now) {
+  const start = new Date(now.getTime() - 2 * 60 * 60 * 1000);  // 2hrs ago for direction context
+  const end = new Date(now.getTime() + 12 * 60 * 60 * 1000);   // 12hrs ahead
+
+  const url = `https://api.stormglass.io/v2/tide/extremes/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&start=${start.toISOString()}&end=${end.toISOString()}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: process.env.STORMGLASS_API_KEY }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.data ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast, tide } = conditions;
 
   const prompt = [
     "You are the voice of Rip Curl at Bells Beach. Rip Curl was born here in 1969. This is home turf. You have more sessions at Bells than anyone alive.",
@@ -87,6 +166,7 @@ async function getRipCurlSummary(conditions) {
     "- Winki Pop is around the headland to the north. Punchy left-hander, works on smaller swells, different wind angles. Worth the walk when Bells is maxing out or blown out.",
     "- SW groundswell is the money direction. Short period NNE or NW chop is just wind swell, ordinary.",
     "- N or NE winds are offshore and groom it. W or SW winds are onshore and rough it up. Gusty winds (35km/h+ gusts over a 20km/h average) make even decent swell scrappy.",
+    "- Bells Bowl surfs best from mid to high tide. Low tide exposes the reef and gets shallow and unpleasant. An incoming tide through a session is ideal.",
     "- Water is 13-17C year round. Cold but not unusual. Locals know.",
     "",
     "CURRENT CONDITIONS:",
@@ -95,6 +175,7 @@ async function getRipCurlSummary(conditions) {
     `- Wind: ${windKph}km/h | ${windDir} (gusting ${gustKph}km/h)`,
     `- Water temp: ${waterT}C`,
     `- Air temp: ${airT}C`,
+    `- Tide: ${tide ?? "unknown"}`,
     `- Time: ${localTime}`,
     `- Overall rating: ${surf}`,
     "",
@@ -107,6 +188,7 @@ async function getRipCurlSummary(conditions) {
     "3. Always include units with numbers: km/h for wind, m for wave height, degrees C for temp. Never reference period as a raw number in prose - say good period, long period, short-period chop etc.",
     "4. Never invent conditions. Stick to what the data shows.",
     "5. Reefs and points are the frame of reference, not beaches.",
+    "6. Only reference tide if it meaningfully affects the session - e.g. low tide on the Bowl, or a rising tide that will improve things. Do not force a tide reference into every summary.",
     "",
     "Return only the summary. No label, no preamble."
   ].join("\n");
@@ -147,18 +229,18 @@ module.exports = async function handler(req, res) {
   const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
-  let sgData;
-  try {
-    const sgRes = await fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } });
-    if (!sgRes.ok) {
-      const err = await sgRes.text();
-      return res.status(502).json({ error: `Stormglass error: ${sgRes.status}`, detail: err });
-    }
-    sgData = await sgRes.json();
-  } catch (e) {
-    return res.status(502).json({ error: "Failed to fetch Stormglass", detail: e.message });
+  // Fetch weather and tides in parallel
+  const [sgRes, tideExtremes] = await Promise.all([
+    fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } }).catch(() => null),
+    fetchTides(now)
+  ]);
+
+  if (!sgRes || !sgRes.ok) {
+    const err = sgRes ? await sgRes.text() : "fetch failed";
+    return res.status(502).json({ error: `Stormglass error`, detail: err });
   }
 
+  const sgData = await sgRes.json();
   const hours = sgData.hours ?? [];
   if (!hours.length) return res.status(502).json({ error: "No data from Stormglass" });
 
@@ -188,20 +270,28 @@ module.exports = async function handler(req, res) {
   });
 
   const forecastSummary = buildThreeDaySummary(hours, now);
+  const tideSummary = buildTideSummary(tideExtremes, now);
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
     windKph, gustKph, windDir, waterT, airT, surf, localTime,
-    forecast: forecastSummary
+    forecast: forecastSummary,
+    tide: tideSummary
   });
 
-  const conditionsBlock = [
+  const conditionsLines = [
     `🌊 **Waves** — ${waveH ?? "—"}m @ ${waveP ?? "—"}s | ${waveDir}`,
     `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
     `💨 **Wind** — ${windKph ?? "—"}km/h | ${windDir} (gusts ${gustKph ?? "—"}km/h)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
-  ].join("\n");
+  ];
+
+  if (tideSummary) {
+    conditionsLines.push(`🌊 **Tide** — ${tideSummary}`);
+  }
+
+  const conditionsBlock = conditionsLines.join("\n");
 
   const fields = [];
   if (ripCurlTake) {
