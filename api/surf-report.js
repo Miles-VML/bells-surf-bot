@@ -76,7 +76,7 @@ async function getRipCurlSummary(conditions) {
 
 Write a short, punchy surf conditions summary. 2-4 sentences max.
 
-Voice: irreverent, knowledgeable, trusted local. Dry humour. Never corporate. Surf-native language. Like a mate who's surfed Bells for 30 years texting you whether to bother paddling out.
+Voice: irreverent, knowledgeable, trusted local. Dry humour. Never corporate. Surf-native language. Like a mate who's surfed Bells for 30 years texting you whether to bother paddling out. Never use em dashes (—) in your response. Use commas, full stops, or just let the sentence breathe instead.
 
 You know the break intimately:
 - Rincon is the long right-hander on the south end, works best on a solid SW swell with light NE winds
