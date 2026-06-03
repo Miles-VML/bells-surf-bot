@@ -103,7 +103,7 @@ Current conditions:
 3-day morning outlook (for context only — do not display the raw data, just weave the trend into your take naturally):
 ${forecast}
 
-Be specific to these actual conditions. Call out which part of the break might be working (or not). Recommend gear if water temp warrants it. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
+Be specific to these actual conditions. Call out which part of the break might be working (or not). Only mention gear if you're recommending someone actually paddle out — never suggest what to wear in the same breath as telling them to stay home. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
 
 Return only the summary text. No labels, no preamble.`;
 
