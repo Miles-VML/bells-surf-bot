@@ -15,15 +15,6 @@ function r1(n) {
   return n != null ? Math.round(n * 10) / 10 : null;
 }
 
-function uvLabel(uv) {
-  if (uv == null) return "—";
-  if (uv <= 2)  return `${uv} Low`;
-  if (uv <= 5)  return `${uv} Moderate`;
-  if (uv <= 7)  return `${uv} High`;
-  if (uv <= 10) return `${uv} Very High`;
-  return `${uv} Extreme`;
-}
-
 function rating(waveHeight, wavePeriod) {
   const h = waveHeight ?? 0;
   const p = wavePeriod ?? 0;
@@ -108,7 +99,11 @@ Current conditions:
 3-day morning outlook (for context only — do not display the raw data, just weave the trend into your take naturally):
 ${forecast}
 
-Be specific to these actual conditions. Call out which part of the break might be working (or not). Only mention gear if you're recommending someone actually paddle out — never suggest what to wear in the same breath as telling them to stay home. If gusts are significantly higher than average wind, mention it. If the forecast shows better surf coming, mention it naturally in one sentence — give people a reason to stay tuned. If it's all downhill from here, be honest about it. Never make up conditions that aren't there.
+STRICT RULES — follow these without exception:
+1. Gear (wetsuits, steamers, booties etc) must NEVER be mentioned unless you are actively telling someone to paddle out RIGHT NOW. If you're telling them to wait, stay home, or come back later — no gear mention. Ever. Not even as an afterthought.
+2. If the forecast shows better surf coming, mention it in one sentence — but never combine it with gear advice.
+3. Be specific to the actual conditions. Call out which part of the break might be working (or not).
+4. Never make up conditions that aren't there.
 
 Return only the summary text. No labels, no preamble.`;
 
@@ -145,7 +140,7 @@ module.exports = async function handler(req, res) {
   const start = new Date(now.getTime() - 60 * 60 * 1000);
   const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
 
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature,uvIndex";
+  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
   let sgData;
@@ -179,8 +174,6 @@ module.exports = async function handler(req, res) {
   const waterT   = r1(pick(closest.waterTemperature));
   const airT     = r1(pick(closest.airTemperature));
   const windKts  = windSpd != null ? r1(windSpd * 1.944) : null;
-  const uvRaw    = pick(closest.uvIndex);
-  const uv       = uvRaw != null ? Math.round(uvRaw) : null;
   const gustKts  = gustSpd != null ? r1(gustSpd * 1.944) : null;
   const surf     = ratingLabel(waveH, waveP);
 
@@ -204,7 +197,6 @@ module.exports = async function handler(req, res) {
     `💨 **Wind** — ${windKts ?? "—"}kts | ${windDir} (gusts ${gustKts ?? "—"}kts)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
-    `☀️ **UV** — ${uvLabel(uv)}`,
   ].join("\n");
 
   const fields = [];
