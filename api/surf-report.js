@@ -201,15 +201,15 @@ module.exports = async function handler(req, res) {
   const fields = [];
 
   if (ripCurlTake) {
-    fields.push({ name: "🤙 The Rip Curl Take", value: ripCurlTake, inline: false });
+    fields.push({ name: "The Rip Curl Take", value: ripCurlTake, inline: false });
   }
 
   const embed = {
-    title: `🌊 Bells Beach — ${surf}`,
+    title: `Bells Beach — ${surf}`,
     color: 0x00b4d8,
     description: `Conditions at ${localTime} (AEST)\n\n${conditionsBlock}`,
     fields,
-    footer: { text: "Stormglass API • Bells Beach, VIC 🤙" },
+    footer: { text: "Stormglass API • Bells Beach, VIC" },
     timestamp: new Date().toISOString()
   };
 
