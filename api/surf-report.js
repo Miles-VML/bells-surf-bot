@@ -77,7 +77,6 @@ async function fetchWorldTides(now) {
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
-    console.log("WorldTides raw:", JSON.stringify(data).slice(0, 600));
     return data.extremes ?? null;
   } catch (e) {
     return null;
