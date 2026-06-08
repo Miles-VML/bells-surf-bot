@@ -1,4 +1,5 @@
 const BELLS_BEACH = { lat: -38.3667, lng: 144.2833 };
+const BOM_TIDE_URL = "http://www.bom.gov.au/australia/tides/scripts/getNextTides.php?aac=VIC_TP020&offset=false&tz=Australia/Melbourne";
 
 function degreesToCompass(deg) {
   if (deg == null) return "—";
@@ -66,83 +67,57 @@ function buildThreeDaySummary(hours, now) {
   return lines.join("\n");
 }
 
-function buildTideSummary(extremes, now) {
-  if (!extremes || !extremes.length) return null;
-
-  // Find the two nearest upcoming extremes
-  const upcoming = extremes
-    .filter(e => new Date(e.time) > now)
-    .sort((a, b) => new Date(a.time) - new Date(b.time))
-    .slice(0, 2);
-
-  if (!upcoming.length) return null;
-
-  // Find the most recent past extreme to determine current direction
-  const past = extremes
-    .filter(e => new Date(e.time) <= now)
-    .sort((a, b) => new Date(b.time) - new Date(a.time));
-
-  const lastExtreme = past[0] ?? null;
-  const nextExtreme = upcoming[0];
-
-  // Determine if tide is incoming or outgoing
-  let direction = null;
-  if (lastExtreme) {
-    direction = nextExtreme.type === "high" ? "Incoming" : "Outgoing";
+async function fetchBOMTides() {
+  try {
+    const res = await fetch(BOM_TIDE_URL);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.results ?? null;
+  } catch (e) {
+    return null;
   }
+}
 
-  // Format next extreme time in AEST
-  const nextTime = new Date(nextExtreme.time).toLocaleTimeString("en-AU", {
+function buildTideSummary(tideData, now) {
+  if (!tideData) return null;
+
+  const nextHigh = tideData.next_high;
+  const nextLow = tideData.next_low;
+
+  if (!nextHigh || !nextLow) return null;
+
+  const highTime = new Date(nextHigh.time * 1000);
+  const lowTime = new Date(nextLow.time * 1000);
+
+  // Determine if tide is incoming or outgoing based on which comes next
+  const direction = highTime < lowTime ? "Incoming" : "Outgoing";
+
+  // Format next extreme (whichever is sooner)
+  const nextIsHigh = highTime < lowTime;
+  const firstTime = nextIsHigh ? highTime : lowTime;
+  const firstType = nextIsHigh ? "High" : "Low";
+  const firstHeight = nextIsHigh ? nextHigh.height : nextLow.height;
+
+  const secondTime = nextIsHigh ? lowTime : highTime;
+  const secondType = nextIsHigh ? "Low" : "High";
+  const secondHeight = nextIsHigh ? nextLow.height : nextHigh.height;
+
+  const formatTime = (date) => date.toLocaleTimeString("en-AU", {
     timeZone: "Australia/Melbourne",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true
   });
 
-  const nextType = nextExtreme.type === "high" ? "High" : "Low";
-  const nextHeight = nextExtreme.height != null ? `${Math.round(nextExtreme.height * 10) / 10}m` : "";
+  let tideStr = `${direction}, ${firstType} ${r1(firstHeight)}m at ${formatTime(firstTime)}`;
 
-  let tideStr = direction ? `${direction}, ` : "";
-  tideStr += `${nextType} ${nextHeight} at ${nextTime}`;
-
-  // Add second extreme if it's today
-  if (upcoming[1]) {
-    const second = upcoming[1];
-    const secondTime = new Date(second.time).toLocaleTimeString("en-AU", {
-      timeZone: "Australia/Melbourne",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true
-    });
-    const secondType = second.type === "high" ? "High" : "Low";
-    const secondHeight = second.height != null ? `${Math.round(second.height * 10) / 10}m` : "";
-
-    // Only show second if within 12 hours
-    const hoursDiff = (new Date(second.time) - now) / (1000 * 60 * 60);
-    if (hoursDiff <= 12) {
-      tideStr += `, then ${secondType} ${secondHeight} at ${secondTime}`;
-    }
+  // Add second extreme if within 12 hours
+  const hoursDiff = (secondTime - now) / (1000 * 60 * 60);
+  if (hoursDiff <= 12) {
+    tideStr += `, then ${secondType} ${r1(secondHeight)}m at ${formatTime(secondTime)}`;
   }
 
   return tideStr;
-}
-
-async function fetchTides(now) {
-  const start = new Date(now.getTime() - 2 * 60 * 60 * 1000);  // 2hrs ago for direction context
-  const end = new Date(now.getTime() + 12 * 60 * 60 * 1000);   // 12hrs ahead
-
-  const url = `https://api.stormglass.io/v2/tide/extremes/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&start=${start.toISOString()}&end=${end.toISOString()}`;
-
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: process.env.STORMGLASS_API_KEY }
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.data ?? null;
-  } catch (e) {
-    return null;
-  }
 }
 
 async function getRipCurlSummary(conditions) {
@@ -229,15 +204,15 @@ module.exports = async function handler(req, res) {
   const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
-  // Fetch weather and tides in parallel
-  const [sgRes, tideExtremes] = await Promise.all([
+  // Fetch weather and BOM tides in parallel
+  const [sgRes, tideData] = await Promise.all([
     fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } }).catch(() => null),
-    fetchTides(now)
+    fetchBOMTides()
   ]);
 
   if (!sgRes || !sgRes.ok) {
     const err = sgRes ? await sgRes.text() : "fetch failed";
-    return res.status(502).json({ error: `Stormglass error`, detail: err });
+    return res.status(502).json({ error: "Stormglass error", detail: err });
   }
 
   const sgData = await sgRes.json();
@@ -270,7 +245,7 @@ module.exports = async function handler(req, res) {
   });
 
   const forecastSummary = buildThreeDaySummary(hours, now);
-  const tideSummary = buildTideSummary(tideExtremes, now);
+  const tideSummary = buildTideSummary(tideData, now);
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
@@ -303,7 +278,7 @@ module.exports = async function handler(req, res) {
     color: 0x00b4d8,
     description: `Conditions at ${localTime} (AEST)\n\n${conditionsBlock}`,
     fields,
-    footer: { text: "Stormglass API • Bells Beach, VIC" },
+    footer: { text: "Stormglass API • BOM Tides • Bells Beach, VIC" },
     timestamp: new Date().toISOString()
   };
 
