@@ -77,6 +77,7 @@ async function fetchWorldTides(now) {
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
+    console.log("WorldTides raw:", JSON.stringify(data).slice(0, 600));
     return data.extremes ?? null;
   } catch (e) {
     return null;
@@ -86,40 +87,40 @@ async function fetchWorldTides(now) {
 function buildTideSummary(extremes, now) {
   if (!extremes || !extremes.length) return null;
 
+  // WorldTides returns dt (Unix seconds) and date (ISO string) -- use dt if available
+  const getTime = (e) => e.dt ? new Date(e.dt * 1000) : new Date(e.date);
+  // WorldTides type field is "High" or "Low"
+  const getType = (e) => e.type === "High" ? "High" : "Low";
+
   // Find upcoming extremes
   const upcoming = extremes
-    .filter(e => new Date(e.date) > now)
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .filter(e => getTime(e) > now)
+    .sort((a, b) => getTime(a) - getTime(b))
     .slice(0, 2);
 
   if (!upcoming.length) return null;
 
-  // Find the most recent past extreme to determine direction
-  const past = extremes
-    .filter(e => new Date(e.date) <= now)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
-
   const nextExtreme = upcoming[0];
-  const direction = nextExtreme.type === "High" ? "Incoming" : "Outgoing";
+  const direction = getType(nextExtreme) === "High" ? "Incoming" : "Outgoing";
 
-  const formatTime = (date) => new Date(date).toLocaleTimeString("en-AU", {
+  const formatTime = (e) => getTime(e).toLocaleTimeString("en-AU", {
     timeZone: "Australia/Melbourne",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true
   });
 
-  const firstType = nextExtreme.type === "High" ? "High" : "Low";
+  const firstType = getType(nextExtreme);
   const firstHeight = r1(nextExtreme.height);
-  let tideStr = `${direction}, ${firstType} ${firstHeight}m at ${formatTime(nextExtreme.date)}`;
+  let tideStr = `${direction}, ${firstType} ${firstHeight}m at ${formatTime(nextExtreme)}`;
 
   // Add second extreme if within 12 hours
   if (upcoming[1]) {
-    const hoursDiff = (new Date(upcoming[1].date) - now) / (1000 * 60 * 60);
+    const hoursDiff = (getTime(upcoming[1]) - now) / (1000 * 60 * 60);
     if (hoursDiff <= 12) {
-      const secondType = upcoming[1].type === "High" ? "High" : "Low";
+      const secondType = getType(upcoming[1]);
       const secondHeight = r1(upcoming[1].height);
-      tideStr += `, then ${secondType} ${secondHeight}m at ${formatTime(upcoming[1].date)}`;
+      tideStr += `, then ${secondType} ${secondHeight}m at ${formatTime(upcoming[1])}`;
     }
   }
 
