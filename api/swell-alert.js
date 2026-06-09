@@ -1,9 +1,6 @@
 // Swell Alert — runs every 3 hours via cron
-// Fires a Discord alert if swell is about to improve significantly
-// Conditions for alert:
-//   - Upcoming wave height is 50%+ higher than current AND
-//   - Upcoming period crosses 10s (groundswell threshold) AND
-//   - Alert hasn't already fired in the last 12 hours (checked via a simple flag)
+// Only fires when conditions are about to improve significantly
+// Designed to feel urgent and actionable -- not a report, a call to arms
 
 const BELLS_BEACH = { lat: -38.3667, lng: 144.2833 };
 
@@ -32,24 +29,37 @@ function ratingLabel(waveHeight, wavePeriod) {
   return "🪨 Flat";
 }
 
-async function getSwellAlertTake(current, upcoming, peakTime) {
+async function getAlertTake(current, incoming, peakTime, changeType) {
   const prompt = [
-    "You are the voice of Rip Curl at Bells Beach. Write a single punchy 1-2 sentence swell alert.",
-    "Something significant is building. This is not a scheduled report, it's a heads-up.",
-    "Voice: direct, excited but not hypey, trusted local. Like a mate texting to say get off the couch.",
-    "Never use em dashes. No gear talk. No preamble.",
+    "You are the voice of Rip Curl at Bells Beach. Something is changing at the break and surfers nearby need to know RIGHT NOW.",
     "",
-    "CURRENT CONDITIONS:",
-    `- Waves: ${current.waveH}m, ${current.waveP}s period`,
-    `- Rating: ${current.surf}`,
+    "Write a swell alert of exactly 2-3 sentences. This is NOT a conditions report. It is an urgent, specific call to action.",
     "",
-    "INCOMING SWELL:",
-    `- Waves: ${upcoming.waveH}m, ${upcoming.waveP}s period`,
-    `- Wind: ${upcoming.windKph}km/h ${upcoming.windDir}`,
-    `- Rating: ${upcoming.surf}`,
-    `- Peaks around: ${peakTime}`,
+    "STRUCTURE -- follow this exactly:",
+    "Sentence 1: What just changed or is about to change, and why it matters at Bells specifically.",
+    "Sentence 2: What a surfer near Bells should do right now -- paddle out, leave work, check it at lunch, wait for X time.",
+    "Sentence 3 (optional): One specific detail about which part of the break will benefit most.",
     "",
-    "Return only the alert text. No label, no preamble."
+    "VOICE:",
+    "- Urgent but not panicked. Like a mate who just checked the cams and is calling you.",
+    "- Specific to Bells Bowl, Rincon, or Winki -- whichever benefits most from the incoming change.",
+    "- Direct. Every word earns its place.",
+    "- Never corporate, never vague, never generic.",
+    "",
+    "WHAT CHANGED:",
+    `- Change type: ${changeType}`,
+    `- Was: ${current.waveH}m @ ${current.waveP}s | ${current.surf}`,
+    `- Becoming: ${incoming.waveH}m @ ${incoming.waveP}s | ${incoming.windKph}km/h ${incoming.windDir} | ${incoming.surf}`,
+    `- Peak expected: ${peakTime}`,
+    "",
+    "RULES:",
+    "1. Never use em dashes. Commas and full stops only.",
+    "2. Always include units: km/h for wind, m for wave height.",
+    "3. Never reference period as a raw number -- say long period, proper groundswell, short-period chop etc.",
+    "4. No gear talk unless telling someone to paddle out right now.",
+    "5. Never make up conditions.",
+    "",
+    "Return only the alert text. No label, no preamble, no sign-off."
   ].join("\n");
 
   try {
@@ -62,7 +72,7 @@ async function getSwellAlertTake(current, upcoming, peakTime) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 100,
+        max_tokens: 150,
         messages: [{ role: "user", content: prompt }]
       })
     });
@@ -100,96 +110,135 @@ module.exports = async function handler(req, res) {
   const hours = sgData.hours ?? [];
   if (!hours.length) return res.status(200).json({ ok: true, alert: false, reason: "No data" });
 
-  // Current conditions -- closest hour to now
+  // Current conditions
   const current = hours.reduce((best, h) =>
     Math.abs(new Date(h.time) - now) < Math.abs(new Date(best.time) - now) ? h : best
   , hours[0]);
 
   const currentWaveH = r1(pick(current.waveHeight)) ?? 0;
   const currentWaveP = pick(current.wavePeriod) != null ? Math.round(pick(current.wavePeriod)) : 0;
+  const currentSurf  = ratingLabel(currentWaveH, currentWaveP);
 
-  // Find the peak hour in the next 6-24 hours
+  // Future hours -- 3 to 24hrs from now
   const futureHours = hours.filter(h => {
-    const t = new Date(h.time);
-    const diffHrs = (t - now) / (1000 * 60 * 60);
+    const diffHrs = (new Date(h.time) - now) / (1000 * 60 * 60);
     return diffHrs >= 3 && diffHrs <= 24;
   });
 
-  if (!futureHours.length) return res.status(200).json({ ok: true, alert: false, reason: "No future hours" });
+  if (!futureHours.length) {
+    return res.status(200).json({ ok: true, alert: false, reason: "No future hours" });
+  }
 
-  // Find the best upcoming hour by wave height
+  // Find the best upcoming hour
   const peakHour = futureHours.reduce((best, h) => {
     const bH = pick(best.waveHeight) ?? 0;
     const hH = pick(h.waveHeight) ?? 0;
     return hH > bH ? h : best;
   }, futureHours[0]);
 
-  const peakWaveH = r1(pick(peakHour.waveHeight)) ?? 0;
-  const peakWaveP = pick(peakHour.wavePeriod) != null ? Math.round(pick(peakHour.wavePeriod)) : 0;
+  const peakWaveH   = r1(pick(peakHour.waveHeight)) ?? 0;
+  const peakWaveP   = pick(peakHour.wavePeriod) != null ? Math.round(pick(peakHour.wavePeriod)) : 0;
   const peakWindSpd = pick(peakHour.windSpeed);
   const peakWindDir = degreesToCompass(pick(peakHour.windDirection));
   const peakWindKph = peakWindSpd != null ? Math.round(peakWindSpd * 3.6) : null;
+  const peakSurf    = ratingLabel(peakWaveH, peakWaveP);
 
-  // Alert conditions:
-  // 1. Peak wave height is at least 50% bigger than current
-  // 2. Peak period crosses 10s (groundswell)
-  // 3. Current conditions aren't already good (no point alerting on already-firing surf)
-  const heightImprovement = currentWaveH > 0 ? (peakWaveH - currentWaveH) / currentWaveH : 1;
-  const periodImprovement = peakWaveP >= 10 && currentWaveP < 10;
-  const alreadyGood = currentWaveH >= 1.5 && currentWaveP >= 10;
+  // Determine what changed and whether it's worth alerting
+  const heightGain     = currentWaveH > 0 ? (peakWaveH - currentWaveH) / currentWaveH : 1;
+  const periodCrossing = peakWaveP >= 10 && currentWaveP < 10;
+  const alreadyFiring  = currentWaveH >= 1.5 && currentWaveP >= 10;
+  const worthAlerting  = !alreadyFiring && (heightGain >= 0.5 || periodCrossing);
 
-  if (heightImprovement < 0.5 || !periodImprovement || alreadyGood) {
+  if (!worthAlerting) {
     return res.status(200).json({
       ok: true,
       alert: false,
-      reason: `No significant improvement. Height +${Math.round(heightImprovement * 100)}%, period ${currentWaveP}s -> ${peakWaveP}s`
+      reason: `No significant change. Height +${Math.round(heightGain * 100)}%, period ${currentWaveP}s -> ${peakWaveP}s, already firing: ${alreadyFiring}`
     });
   }
 
-  // Format peak time in AEST
-  const peakTime = new Date(peakHour.time).toLocaleTimeString("en-AU", {
+  // Describe what changed
+  let changeType = "";
+  if (heightGain >= 0.5 && periodCrossing) {
+    changeType = "Swell height jumping significantly AND period crossing into proper groundswell territory";
+  } else if (periodCrossing) {
+    changeType = "Period crossing from wind swell into proper groundswell -- the quality jump surfers actually care about";
+  } else {
+    changeType = `Swell height lifting ${Math.round(heightGain * 100)}% within the next 24 hours`;
+  }
+
+  // Format peak time
+  const peakTime = new Date(peakHour.time).toLocaleString("en-AU", {
     timeZone: "Australia/Melbourne",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
-    weekday: "short"
+    weekday: "short",
+    day: "numeric",
+    month: "short"
   });
 
-  const currentSurf = ratingLabel(currentWaveH, currentWaveP);
-  const peakSurf = ratingLabel(peakWaveH, peakWaveP);
-
-  const alertTake = await getSwellAlertTake(
+  const alertTake = await getAlertTake(
     { waveH: currentWaveH, waveP: currentWaveP, surf: currentSurf },
     { waveH: peakWaveH, waveP: peakWaveP, windKph: peakWindKph, windDir: peakWindDir, surf: peakSurf },
-    peakTime
+    peakTime,
+    changeType
   );
 
+  // Alert embed -- orange, distinct from the teal report, no conditions data dump
   const embed = {
-    title: `⚡ Bells Beach — Swell Building`,
+    title: `🚨 Swell Alert — Bells Beach`,
     color: 0xff6b00,
-    description: alertTake ?? `Swell building at Bells. ${currentWaveH}m now, ${peakWaveH}m expected by ${peakTime}.`,
+    description: alertTake ?? `Conditions improving at Bells. ${currentWaveH}m now, ${peakWaveH}m @ ${peakWaveP}s expected by ${peakTime}.`,
     fields: [
-      { name: "Now", value: `${currentWaveH}m @ ${currentWaveP}s | ${currentSurf}`, inline: true },
-      { name: "Incoming", value: `${peakWaveH}m @ ${peakWaveP}s | ${peakSurf}`, inline: true },
-      { name: "Peaks around", value: peakTime, inline: true },
+      {
+        name: "Right now",
+        value: `${currentWaveH}m @ ${currentWaveP}s | ${currentSurf}`,
+        inline: true
+      },
+      {
+        name: "Incoming",
+        value: `${peakWaveH}m @ ${peakWaveP}s | ${peakSurf}`,
+        inline: true
+      },
+      {
+        name: "Peaks",
+        value: peakTime,
+        inline: true
+      }
     ],
-    footer: { text: "Stormglass API • Bells Beach, VIC" },
+    footer: { text: "Stormglass API • Bells Beach, VIC • Swell Alert" },
     timestamp: new Date().toISOString()
   };
 
   try {
-    const discordRes = await fetch(DISCORD_WEBHOOK, {
+    // Post the alert embed
+    await fetch(DISCORD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embeds: [embed] })
     });
-    if (!discordRes.ok) {
-      const err = await discordRes.text();
-      return res.status(502).json({ error: "Discord webhook failed", detail: err });
-    }
+
+    // Follow-up action prompt -- different tone to the report's reaction prompt
+    await fetch(DISCORD_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: "**Are you going?** 🏄 = Heading out   👀 = Watching first   😭 = Can't make it"
+      })
+    });
   } catch (e) {
-    return res.status(502).json({ error: "Failed to post to Discord", detail: e.message });
+    return res.status(502).json({ error: "Discord post failed", detail: e.message });
   }
 
-  return res.status(200).json({ ok: true, alert: true, peakWaveH, peakWaveP, peakTime });
+  return res.status(200).json({
+    ok: true,
+    alert: true,
+    changeType,
+    currentWaveH,
+    currentWaveP,
+    peakWaveH,
+    peakWaveP,
+    peakTime
+  });
 };
