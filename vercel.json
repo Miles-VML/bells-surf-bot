@@ -7,6 +7,10 @@
     {
       "path": "/api/surf-report",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/swell-alert",
+      "schedule": "0 */3 * * *"
     }
   ]
 }
