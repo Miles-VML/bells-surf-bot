@@ -69,10 +69,7 @@ function buildThreeDaySummary(hours, now) {
 async function fetchWorldTides(now) {
   const key = process.env.WORLDTIDES_API_KEY;
   if (!key) return null;
-
-  // Request extremes for next 24 hours using LAT datum to match BOM published tables
   const url = `https://www.worldtides.info/api/v3?extremes&lat=${BELLS_BEACH.lat}&lon=${BELLS_BEACH.lng}&datum=LAT&days=2&timezone=Australia/Melbourne&key=${key}`;
-
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -85,44 +82,26 @@ async function fetchWorldTides(now) {
 
 function buildTideSummary(extremes, now) {
   if (!extremes || !extremes.length) return null;
-
-  // WorldTides returns dt (Unix seconds) and date (ISO string) -- use dt if available
   const getTime = (e) => e.dt ? new Date(e.dt * 1000) : new Date(e.date);
-  // WorldTides type field is "High" or "Low"
   const getType = (e) => e.type === "High" ? "High" : "Low";
-
-  // Find upcoming extremes
   const upcoming = extremes
     .filter(e => getTime(e) > now)
     .sort((a, b) => getTime(a) - getTime(b))
     .slice(0, 2);
-
   if (!upcoming.length) return null;
-
   const nextExtreme = upcoming[0];
   const direction = getType(nextExtreme) === "High" ? "Incoming" : "Outgoing";
-
   const formatTime = (e) => getTime(e).toLocaleTimeString("en-AU", {
     timeZone: "Australia/Melbourne",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true
+    hour: "2-digit", minute: "2-digit", hour12: true
   });
-
-  const firstType = getType(nextExtreme);
-  const firstHeight = r1(nextExtreme.height);
-  let tideStr = `${direction}, ${firstType} ${firstHeight}m at ${formatTime(nextExtreme)}`;
-
-  // Add second extreme if within 12 hours
+  let tideStr = `${direction}, ${getType(nextExtreme)} ${r1(nextExtreme.height)}m at ${formatTime(nextExtreme)}`;
   if (upcoming[1]) {
     const hoursDiff = (getTime(upcoming[1]) - now) / (1000 * 60 * 60);
     if (hoursDiff <= 12) {
-      const secondType = getType(upcoming[1]);
-      const secondHeight = r1(upcoming[1].height);
-      tideStr += `, then ${secondType} ${secondHeight}m at ${formatTime(upcoming[1])}`;
+      tideStr += `, then ${getType(upcoming[1])} ${r1(upcoming[1].height)}m at ${formatTime(upcoming[1])}`;
     }
   }
-
   return tideStr;
 }
 
@@ -195,6 +174,18 @@ async function getRipCurlSummary(conditions) {
   }
 }
 
+async function postToDiscord(webhook, payload) {
+  const res = await fetch(webhook, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Discord error: ${err}`);
+  }
+}
+
 module.exports = async function handler(req, res) {
   const STORMGLASS_KEY = process.env.STORMGLASS_API_KEY;
   const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
@@ -210,7 +201,6 @@ module.exports = async function handler(req, res) {
   const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
-  // Fetch weather and tides in parallel
   const [sgRes, tideExtremes] = await Promise.all([
     fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } }).catch(() => null),
     fetchWorldTides(now)
@@ -267,17 +257,11 @@ module.exports = async function handler(req, res) {
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
   ];
-
-  if (tideSummary) {
-    conditionsLines.push(`🌊 **Tide** — ${tideSummary}`);
-  }
+  if (tideSummary) conditionsLines.push(`🌊 **Tide** — ${tideSummary}`);
 
   const conditionsBlock = conditionsLines.join("\n");
-
   const fields = [];
-  if (ripCurlTake) {
-    fields.push({ name: "The Rip Curl Take", value: ripCurlTake, inline: false });
-  }
+  if (ripCurlTake) fields.push({ name: "The Rip Curl Take", value: ripCurlTake, inline: false });
 
   const embed = {
     title: `Bells Beach — ${surf}`,
@@ -289,17 +273,15 @@ module.exports = async function handler(req, res) {
   };
 
   try {
-    const discordRes = await fetch(DISCORD_WEBHOOK, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ embeds: [embed] })
+    // Post the main conditions embed
+    await postToDiscord(DISCORD_WEBHOOK, { embeds: [embed] });
+
+    // Post the engagement prompt as a follow-up message
+    await postToDiscord(DISCORD_WEBHOOK, {
+      content: "**Worth the paddle?** React below 👇\n🤙 = Worth it   🤦 = Don't bother   📸 = Drop your shots"
     });
-    if (!discordRes.ok) {
-      const err = await discordRes.text();
-      return res.status(502).json({ error: "Discord webhook failed", detail: err });
-    }
   } catch (e) {
-    return res.status(502).json({ error: "Failed to post to Discord", detail: e.message });
+    return res.status(502).json({ error: "Discord post failed", detail: e.message });
   }
 
   return res.status(200).json({ ok: true, surfRating: surf, dataTime: closest.time });
