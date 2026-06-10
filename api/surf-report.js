@@ -106,7 +106,11 @@ function buildTideSummary(extremes, now) {
 }
 
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, waveDir, swellH, swellP, swellDir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast, tide } = conditions;
+  const { waveH, waveP, waveDir, swellH, swellP, swellDir, swell2H, swell2P, swell2Dir, windKph, gustKph, windDir, waterT, airT, surf, localTime, forecast, tide } = conditions;
+
+  const secondarySwellLine = swell2H
+    ? `- Secondary swell: ${swell2H}m @ ${swell2P}s | ${swell2Dir}`
+    : "";
 
   const prompt = [
     "You are the voice of Rip Curl at Bells Beach. Rip Curl was born here in 1969. This is home turf. You have more sessions at Bells than anyone alive.",
@@ -127,11 +131,13 @@ async function getRipCurlSummary(conditions) {
     "- SW groundswell is the money direction. Short period NNE or NW chop is just wind swell, ordinary.",
     "- N or NE winds are offshore and groom it. W or SW winds are onshore and rough it up. Gusty winds (35km/h+ gusts over a 20km/h average) make even decent swell scrappy.",
     "- Bells Bowl surfs best from mid to high tide. Low tide exposes the reef and gets shallow and unpleasant. An incoming tide through a session is ideal.",
+    "- When there are two swells, consider how they interact -- a solid SW groundswell with a small NNE wind swell on top is messy. Two swells from similar directions can stack nicely.",
     "- Water is 13-17C year round. Cold but not unusual. Locals know.",
     "",
     "CURRENT CONDITIONS:",
     `- Waves: ${waveH}m @ ${waveP}s | ${waveDir}`,
-    `- Swell: ${swellH}m @ ${swellP}s | ${swellDir}`,
+    `- Primary swell: ${swellH}m @ ${swellP}s | ${swellDir}`,
+    secondarySwellLine,
     `- Wind: ${windKph}km/h | ${windDir} (gusting ${gustKph}km/h)`,
     `- Water temp: ${waterT}C`,
     `- Air temp: ${airT}C`,
@@ -148,10 +154,11 @@ async function getRipCurlSummary(conditions) {
     "3. Always include units with numbers: km/h for wind, m for wave height, degrees C for temp. Never reference period as a raw number in prose - say good period, long period, short-period chop etc.",
     "4. Never invent conditions. Stick to what the data shows.",
     "5. Reefs and points are the frame of reference, not beaches.",
-    "6. Only reference tide if it meaningfully affects the session - e.g. low tide on the Bowl, or a rising tide that will improve things. Do not force a tide reference into every summary.",
+    "6. Only reference tide if it meaningfully affects the session.",
+    "7. If secondary swell is present and relevant, mention how the two swells interact.",
     "",
     "Return only the summary. No label, no preamble."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -198,7 +205,7 @@ module.exports = async function handler(req, res) {
   const start = new Date(now.getTime() - 60 * 60 * 1000);
   const end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
 
-  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
+  const params = "waveHeight,wavePeriod,waveDirection,swellHeight,swellPeriod,swellDirection,secondarySwellHeight,secondarySwellPeriod,secondarySwellDirection,windSpeed,windDirection,gust,waterTemperature,airTemperature";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
 
   const [sgRes, tideExtremes] = await Promise.all([
@@ -225,6 +232,9 @@ module.exports = async function handler(req, res) {
   const swellH   = r1(pick(closest.swellHeight));
   const swellP   = pick(closest.swellPeriod) != null ? Math.round(pick(closest.swellPeriod)) : null;
   const swellDir = degreesToCompass(pick(closest.swellDirection));
+  const swell2H  = r1(pick(closest.secondarySwellHeight));
+  const swell2P  = pick(closest.secondarySwellPeriod) != null ? Math.round(pick(closest.secondarySwellPeriod)) : null;
+  const swell2Dir = degreesToCompass(pick(closest.secondarySwellDirection));
   const windSpd  = pick(closest.windSpeed);
   const windDir  = degreesToCompass(pick(closest.windDirection));
   const gustSpd  = pick(closest.gust);
@@ -245,6 +255,7 @@ module.exports = async function handler(req, res) {
 
   const ripCurlTake = await getRipCurlSummary({
     waveH, waveP, waveDir, swellH, swellP, swellDir,
+    swell2H, swell2P, swell2Dir,
     windKph, gustKph, windDir, waterT, airT, surf, localTime,
     forecast: forecastSummary,
     tide: tideSummary
@@ -253,30 +264,27 @@ module.exports = async function handler(req, res) {
   const conditionsLines = [
     `🌊 **Waves** — ${waveH ?? "—"}m @ ${waveP ?? "—"}s | ${waveDir}`,
     `🌀 **Swell** — ${swellH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
+    swell2H ? `↳ **Secondary** — ${swell2H}m @ ${swell2P ?? "—"}s | ${swell2Dir}` : null,
     `💨 **Wind** — ${windKph ?? "—"}km/h | ${windDir} (gusts ${gustKph ?? "—"}km/h)`,
     `🌡️ **Water** — ${waterT ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
-  ];
-  if (tideSummary) conditionsLines.push(`🌊 **Tide** — ${tideSummary}`);
+    tideSummary ? `🌊 **Tide** — ${tideSummary}` : null,
+  ].filter(Boolean).join("\n");
 
-  const conditionsBlock = conditionsLines.join("\n");
   const fields = [];
   if (ripCurlTake) fields.push({ name: "The Rip Curl Take", value: ripCurlTake, inline: false });
 
   const embed = {
     title: `Bells Beach — ${surf}`,
     color: 0x00b4d8,
-    description: `Conditions at ${localTime} (AEST)\n\n${conditionsBlock}`,
+    description: `Conditions at ${localTime} (AEST)\n\n${conditionsLines}`,
     fields,
     footer: { text: "Stormglass API • WorldTides • Bells Beach, VIC" },
     timestamp: new Date().toISOString()
   };
 
   try {
-    // Post the main conditions embed
     await postToDiscord(DISCORD_WEBHOOK, { embeds: [embed] });
-
-    // Post the engagement prompt as a follow-up message
     await postToDiscord(DISCORD_WEBHOOK, {
       content: "**Worth the paddle?** React below 👇\n🤙 = Worth it   🤦 = Don't bother   📸 = Drop your shots"
     });
