@@ -1,5 +1,5 @@
 // Swell Alert — runs every 3 hours via cron
-// Only fires when conditions are about to improve significantly
+// Only fires when conditions are about to improve significantly WITHIN THE NEXT 6 HOURS
 // Designed to feel urgent and actionable -- not a report, a call to arms
 
 const BELLS_BEACH = { lat: -38.3667, lng: 144.2833 };
@@ -31,17 +31,17 @@ function ratingLabel(waveHeight, wavePeriod) {
 
 async function getAlertTake(current, incoming, peakTime, changeType) {
   const prompt = [
-    "You are the voice of Rip Curl at Bells Beach. Something is changing at the break and surfers nearby need to know RIGHT NOW.",
+    "You are the voice of Rip Curl at Bells Beach. Something is changing at the break RIGHT NOW and surfers nearby need to know immediately.",
     "",
-    "Write a swell alert of exactly 2-3 sentences. This is NOT a conditions report. It is an urgent, specific call to action.",
+    "Write a swell alert of exactly 2-3 sentences. This is NOT a conditions report. It is an urgent, specific call to action for something happening within the next few hours.",
     "",
     "STRUCTURE -- follow this exactly:",
-    "Sentence 1: What just changed or is about to change, and why it matters at Bells specifically.",
-    "Sentence 2: What a surfer near Bells should do right now -- paddle out, leave work, check it at lunch, wait for X time.",
+    "Sentence 1: What is changing right now or imminently, and why it matters at Bells specifically.",
+    "Sentence 2: What a surfer near Bells should do right now -- paddle out, leave work, get there by a specific time.",
     "Sentence 3 (optional): One specific detail about which part of the break will benefit most.",
     "",
     "VOICE:",
-    "- Urgent but not panicked. Like a mate who just checked the cams and is calling you.",
+    "- Urgent but not panicked. Like a mate who just checked the break and is calling you.",
     "- Specific to Bells Bowl, Rincon, or Winki -- whichever benefits most from the incoming change.",
     "- Direct. Every word earns its place.",
     "- Never corporate, never vague, never generic.",
@@ -58,6 +58,7 @@ async function getAlertTake(current, incoming, peakTime, changeType) {
     "3. Never reference period as a raw number -- say long period, proper groundswell, short-period chop etc.",
     "4. No gear talk unless telling someone to paddle out right now.",
     "5. Never make up conditions.",
+    "6. This is imminent -- hours away, not days. Write accordingly.",
     "",
     "Return only the alert text. No label, no preamble, no sign-off."
   ].join("\n");
@@ -93,7 +94,7 @@ module.exports = async function handler(req, res) {
 
   const now = new Date();
   const start = new Date(now.getTime() - 60 * 60 * 1000);
-  const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const end = new Date(now.getTime() + 8 * 60 * 60 * 1000); // Only need 8hrs of data
 
   const params = "waveHeight,wavePeriod,waveDirection,windSpeed,windDirection";
   const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
@@ -119,17 +120,17 @@ module.exports = async function handler(req, res) {
   const currentWaveP = pick(current.wavePeriod) != null ? Math.round(pick(current.wavePeriod)) : 0;
   const currentSurf  = ratingLabel(currentWaveH, currentWaveP);
 
-  // Future hours -- 3 to 24hrs from now
+  // Only look 1-6 hours ahead -- if it's not happening today, it's not an alert
   const futureHours = hours.filter(h => {
     const diffHrs = (new Date(h.time) - now) / (1000 * 60 * 60);
-    return diffHrs >= 3 && diffHrs <= 24;
+    return diffHrs >= 1 && diffHrs <= 6;
   });
 
   if (!futureHours.length) {
-    return res.status(200).json({ ok: true, alert: false, reason: "No future hours" });
+    return res.status(200).json({ ok: true, alert: false, reason: "No future hours in window" });
   }
 
-  // Find the best upcoming hour
+  // Find the best upcoming hour by wave height
   const peakHour = futureHours.reduce((best, h) => {
     const bH = pick(best.waveHeight) ?? 0;
     const hH = pick(h.waveHeight) ?? 0;
@@ -143,29 +144,25 @@ module.exports = async function handler(req, res) {
   const peakWindKph = peakWindSpd != null ? Math.round(peakWindSpd * 3.6) : null;
   const peakSurf    = ratingLabel(peakWaveH, peakWaveP);
 
-  // Determine what changed and whether it's worth alerting
+  // Alert only fires when BOTH conditions are true:
+  // 1. Height jumping 75%+ within 6 hours
+  // 2. Period crossing into proper groundswell (10s+)
+  // This combination means a genuine step-change, not a gradual build
   const heightGain     = currentWaveH > 0 ? (peakWaveH - currentWaveH) / currentWaveH : 1;
   const periodCrossing = peakWaveP >= 10 && currentWaveP < 10;
   const alreadyFiring  = currentWaveH >= 1.5 && currentWaveP >= 10;
-  const worthAlerting  = !alreadyFiring && (heightGain >= 0.5 || periodCrossing);
+  const worthAlerting  = !alreadyFiring && (heightGain >= 0.75 && periodCrossing);
 
   if (!worthAlerting) {
     return res.status(200).json({
       ok: true,
       alert: false,
-      reason: `No significant change. Height +${Math.round(heightGain * 100)}%, period ${currentWaveP}s -> ${peakWaveP}s, already firing: ${alreadyFiring}`
+      reason: `No significant imminent change. Height +${Math.round(heightGain * 100)}%, period ${currentWaveP}s -> ${peakWaveP}s, already firing: ${alreadyFiring}`
     });
   }
 
   // Describe what changed
-  let changeType = "";
-  if (heightGain >= 0.5 && periodCrossing) {
-    changeType = "Swell height jumping significantly AND period crossing into proper groundswell territory";
-  } else if (periodCrossing) {
-    changeType = "Period crossing from wind swell into proper groundswell -- the quality jump surfers actually care about";
-  } else {
-    changeType = `Swell height lifting ${Math.round(heightGain * 100)}% within the next 24 hours`;
-  }
+  const changeType = "Swell height jumping significantly AND period crossing into proper groundswell within the next few hours";
 
   // Format peak time
   const peakTime = new Date(peakHour.time).toLocaleString("en-AU", {
@@ -185,11 +182,10 @@ module.exports = async function handler(req, res) {
     changeType
   );
 
-  // Alert embed -- orange, distinct from the teal report, no conditions data dump
   const embed = {
     title: `🚨 Swell Alert — Bells Beach`,
     color: 0xff6b00,
-    description: alertTake ?? `Conditions improving at Bells. ${currentWaveH}m now, ${peakWaveH}m @ ${peakWaveP}s expected by ${peakTime}.`,
+    description: alertTake ?? `Conditions jumping at Bells within the next few hours. ${currentWaveH}m now, ${peakWaveH}m @ ${peakWaveP}s by ${peakTime}.`,
     fields: [
       {
         name: "Right now",
@@ -212,14 +208,12 @@ module.exports = async function handler(req, res) {
   };
 
   try {
-    // Post the alert embed
     await fetch(DISCORD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embeds: [embed] })
     });
 
-    // Follow-up action prompt -- different tone to the report's reaction prompt
     await fetch(DISCORD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
