@@ -197,7 +197,7 @@ function buildThreeDaySummary(waveArr, windArr, now) {
 
 // ─── Rip Curl AI Take ─────────────────────────────────────────────────────────
 async function getRipCurlSummary(conditions) {
-  const { waveH, waveP, swellDir, swell2H, swell2P, swell2Dir, windKph, gustKph, windDir, windDirType, waterT: waterTDisplay, airT, wavePower, bellsScore, localTime, forecast, tide } = conditions;
+  const { waveH, waveP, swellDir, swell2H, swell2P, swell2Dir, windKph, gustKph, windDir, windDirType, waterT: waterTDisplay, airT, bellsScore, localTime, forecast, tide } = conditions;
 
   const secondaryLine = swell2H ? `- Secondary swell: ${swell2H}m @ ${swell2P}s | ${swell2Dir}` : "";
 
@@ -231,7 +231,6 @@ async function getRipCurlSummary(conditions) {
     `- Air temp: ${airT}C`,
     `- Tide: ${tide?.text ?? "unknown"}`,
     `- Time: ${localTime}`,
-    `- Wave energy: ${wavePower ? wavePower + "kJ" : "unknown"}`,
     `- Bells rating: ${bellsScore.display}`,
     "",
     "3-DAY OUTLOOK (weave naturally into your take if relevant, one sentence max, no raw data):",
@@ -385,7 +384,7 @@ module.exports = async function handler(req, res) {
     waveH, waveP: swellP, swellDir,
     swell2H, swell2P, swell2Dir,
     windKph, gustKph, windDir, windDirType,
-    waterT: waterTDisplay, airT, wavePower: wave.power ? Math.round(wave.power) : null, bellsScore, localTime,
+    waterT: waterTDisplay, airT, bellsScore, localTime,
     forecast: forecastSummary,
     tide: tideSummary
   });
@@ -394,7 +393,6 @@ module.exports = async function handler(req, res) {
     `🌊 **Waves** — ${waveH ?? "—"}m @ ${swellP ?? "—"}s | ${swellDir}`,
     swellH ? `🌀 **Swell** — ${swellH}m @ ${swellP ?? "—"}s | ${swellDir}` : null,
     swell2H ? `↳ **Secondary** — ${swell2H}m @ ${swell2P ?? "—"}s | ${swell2Dir}` : null,
-    wave.power ? `⚡ **Energy** — ${Math.round(wave.power)}kJ` : null,
     `💨 **Wind** — ${windKph ?? "—"}km/h | ${windDir}${windDirType ? ` (${windDirType})` : ""} (gusts ${gustKph ?? "—"}km/h)`,
     `🌡️ **Water** — ${waterTDisplay ?? "—"}°C`,
     `🌤️ **Air** — ${airT ?? "—"}°C`,
