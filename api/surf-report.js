@@ -286,7 +286,9 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: "Missing Surfline credentials" });
   }
 
+
   const now = new Date();
+  const testMode = req.query?.preview === "true" || req.query?.test === "true";
 
   // Fetch Surfline endpoints + Stormglass water temp in parallel
   const sgStart = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
@@ -410,6 +412,17 @@ module.exports = async function handler(req, res) {
     footer: { text: "Surfline • Bells Beach, VIC" },
     timestamp: new Date().toISOString()
   };
+
+  if (testMode) {
+    // Test mode -- return full payload without posting to Discord
+    return res.status(200).json({
+      testMode: true,
+      bellsScore: bellsScore.display,
+      dataTime: wave.timestamp,
+      embed,
+      ripCurlTake
+    });
+  }
 
   try {
     await postToDiscord(DISCORD_WEBHOOK, { embeds: [embed] });
