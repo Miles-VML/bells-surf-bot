@@ -1,19 +1,24 @@
 // Swell Alert — runs every 3 hours via cron
 // Only fires when conditions are about to improve significantly WITHIN THE NEXT 6 HOURS
 // Designed to feel urgent and actionable -- not a report, a call to arms
+// Data source: Surfline Platform API (matches surf-report.js)
 
-const BELLS_BEACH = { lat: -38.3667, lng: 144.2833 };
+const SPOT_ID = "584204204e65fad6a77099c7";
+const BASE_URL = "https://platform.surfline.com";
 
-function pick(sources) {
-  if (!sources) return null;
-  return sources.sg ?? sources.noaa ?? sources.meteo ?? Object.values(sources)[0] ?? null;
+// ─── Auth ────────────────────────────────────────────────────────────────────
+function getAuthHeader() {
+  const username = process.env.SURFLINE_USERNAME;
+  const password = process.env.SURFLINE_PASSWORD;
+  if (!username || !password) return null;
+  const encoded = Buffer.from(`${username}:${password}`).toString("base64");
+  return `Basic ${encoded}`;
 }
 
-function r1(n) {
-  return n != null ? Math.round(n * 10) / 10 : null;
-}
-
-function degreesToCompass(deg) {
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function r1(n) { return n != null ? Math.round(n * 10) / 10 : null; }
+function feetToMetres(ft) { return ft != null ? r1(ft / 3.281) : null; }
+function degToCompass(deg) {
   if (deg == null) return "—";
   const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
   return dirs[Math.round(deg / 22.5) % 16];
@@ -27,6 +32,48 @@ function ratingLabel(waveHeight, wavePeriod) {
   if (h >= 1.0 && p >= 8)  return "👌 Decent";
   if (h >= 0.5)             return "😐 Small";
   return "🪨 Flat";
+}
+
+// ─── Surfline fetch ───────────────────────────────────────────────────────────
+async function fetchSurfline(path) {
+  const auth = getAuthHeader();
+  if (!auth) return null;
+  try {
+    const res = await fetch(`${BASE_URL}${path}?spotId=${SPOT_ID}`, {
+      headers: { "Authorization": auth, "Accept": "application/json" }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+// Pull a clean conditions snapshot from a Surfline wave entry + matching wind entry
+function waveSnapshot(waveEntry) {
+  if (!waveEntry) return null;
+  const surfMinM = feetToMetres(waveEntry.surf?.min ?? 0);
+  const surfMaxM = feetToMetres(waveEntry.surf?.max ?? 0);
+  const waveH = r1((surfMinM + surfMaxM) / 2);
+
+  // Primary swell = highest optimalScore, else first with height
+  const swells = waveEntry.swells ?? [];
+  const primary = swells.reduce(
+    (best, s) => (s.optimalScore > (best?.optimalScore ?? -1) ? s : best),
+    swells[0] ?? null
+  );
+  const waveP = primary?.period ?? 0;
+  const swellDir = primary ? degToCompass(primary.direction) : "—";
+
+  return { waveH: waveH ?? 0, waveP: Math.round(waveP), swellDir };
+}
+
+// Find array item closest to a target unix-seconds time
+function closestTo(arr, targetSec) {
+  if (!arr || !arr.length) return null;
+  return arr.reduce((best, h) =>
+    Math.abs(h.timestamp - targetSec) < Math.abs(best.timestamp - targetSec) ? h : best
+  , arr[0]);
 }
 
 async function getAlertTake(current, incoming, peakTime, changeType) {
@@ -49,7 +96,7 @@ async function getAlertTake(current, incoming, peakTime, changeType) {
     "WHAT CHANGED:",
     `- Change type: ${changeType}`,
     `- Was: ${current.waveH}m @ ${current.waveP}s | ${current.surf}`,
-    `- Becoming: ${incoming.waveH}m @ ${incoming.waveP}s | ${incoming.windKph}km/h ${incoming.windDir} | ${incoming.surf}`,
+    `- Becoming: ${incoming.waveH}m @ ${incoming.waveP}s | ${incoming.windKph}km/h ${incoming.windDir} (${incoming.windDirType}) | ${incoming.surf}`,
     `- Peak expected: ${peakTime}`,
     "",
     "RULES:",
@@ -85,69 +132,76 @@ async function getAlertTake(current, incoming, peakTime, changeType) {
 }
 
 module.exports = async function handler(req, res) {
-  const STORMGLASS_KEY = process.env.STORMGLASS_API_KEY;
   const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
+  if (!DISCORD_WEBHOOK) return res.status(500).json({ error: "Missing DISCORD_WEBHOOK_URL" });
+  if (!process.env.SURFLINE_USERNAME || !process.env.SURFLINE_PASSWORD) {
+    return res.status(500).json({ error: "Missing Surfline credentials" });
+  }
 
-  if (!STORMGLASS_KEY || !DISCORD_WEBHOOK) {
-    return res.status(500).json({ error: "Missing environment variables" });
+  // Test mode -- ?test=true or ?preview=true returns the decision without posting
+  let testMode = false;
+  try {
+    const parsedUrl = new URL(req.url, `https://${req.headers.host}`);
+    testMode = parsedUrl.searchParams.get("preview") === "true" || parsedUrl.searchParams.get("test") === "true";
+  } catch (e) {
+    testMode = false;
   }
 
   const now = new Date();
-  const start = new Date(now.getTime() - 60 * 60 * 1000);
-  const end = new Date(now.getTime() + 8 * 60 * 60 * 1000); // Only need 8hrs of data
+  const nowSec = now.getTime() / 1000;
 
-  const params = "waveHeight,wavePeriod,waveDirection,windSpeed,windDirection";
-  const sgUrl = `https://api.stormglass.io/v2/weather/point?lat=${BELLS_BEACH.lat}&lng=${BELLS_BEACH.lng}&params=${params}&start=${start.toISOString()}&end=${end.toISOString()}`;
+  // Fetch wave + wind from Surfline in parallel
+  const [waveData, windData] = await Promise.all([
+    fetchSurfline("/spots/forecasts/wave"),
+    fetchSurfline("/spots/forecasts/wind"),
+  ]);
 
-  let sgData;
-  try {
-    const sgRes = await fetch(sgUrl, { headers: { Authorization: STORMGLASS_KEY } });
-    if (!sgRes.ok) return res.status(502).json({ error: "Stormglass error" });
-    sgData = await sgRes.json();
-  } catch (e) {
-    return res.status(502).json({ error: "Stormglass fetch failed" });
+  if (!waveData || !windData) {
+    return res.status(502).json({ error: "Failed to fetch Surfline data" });
   }
 
-  const hours = sgData.hours ?? [];
-  if (!hours.length) return res.status(200).json({ ok: true, alert: false, reason: "No data" });
+  const waveArr = waveData.data?.wave ?? [];
+  const windArr = windData.data?.wind ?? [];
+  if (!waveArr.length) return res.status(200).json({ ok: true, alert: false, reason: "No wave data" });
 
   // Current conditions
-  const current = hours.reduce((best, h) =>
-    Math.abs(new Date(h.time) - now) < Math.abs(new Date(best.time) - now) ? h : best
-  , hours[0]);
-
-  const currentWaveH = r1(pick(current.waveHeight)) ?? 0;
-  const currentWaveP = pick(current.wavePeriod) != null ? Math.round(pick(current.wavePeriod)) : 0;
+  const currentWave = closestTo(waveArr, nowSec);
+  const currentSnap = waveSnapshot(currentWave);
+  const currentWaveH = currentSnap.waveH;
+  const currentWaveP = currentSnap.waveP;
   const currentSurf  = ratingLabel(currentWaveH, currentWaveP);
 
   // Only look 1-6 hours ahead -- if it's not happening today, it's not an alert
-  const futureHours = hours.filter(h => {
-    const diffHrs = (new Date(h.time) - now) / (1000 * 60 * 60);
+  const futureWave = waveArr.filter(h => {
+    const diffHrs = (h.timestamp - nowSec) / 3600;
     return diffHrs >= 1 && diffHrs <= 6;
   });
 
-  if (!futureHours.length) {
+  if (!futureWave.length) {
     return res.status(200).json({ ok: true, alert: false, reason: "No future hours in window" });
   }
 
-  // Find the best upcoming hour by wave height
-  const peakHour = futureHours.reduce((best, h) => {
-    const bH = pick(best.waveHeight) ?? 0;
-    const hH = pick(h.waveHeight) ?? 0;
-    return hH > bH ? h : best;
-  }, futureHours[0]);
+  // Find the biggest upcoming hour by averaged surf height
+  const peakWave = futureWave.reduce((best, h) => {
+    const bSnap = waveSnapshot(best);
+    const hSnap = waveSnapshot(h);
+    return hSnap.waveH > bSnap.waveH ? h : best;
+  }, futureWave[0]);
 
-  const peakWaveH   = r1(pick(peakHour.waveHeight)) ?? 0;
-  const peakWaveP   = pick(peakHour.wavePeriod) != null ? Math.round(pick(peakHour.wavePeriod)) : 0;
-  const peakWindSpd = pick(peakHour.windSpeed);
-  const peakWindDir = degreesToCompass(pick(peakHour.windDirection));
-  const peakWindKph = peakWindSpd != null ? Math.round(peakWindSpd * 3.6) : null;
-  const peakSurf    = ratingLabel(peakWaveH, peakWaveP);
+  const peakSnap = waveSnapshot(peakWave);
+  const peakWaveH = peakSnap.waveH;
+  const peakWaveP = peakSnap.waveP;
+  const peakSurf  = ratingLabel(peakWaveH, peakWaveP);
+
+  // Matching wind at the peak time
+  const peakWind = closestTo(windArr, peakWave.timestamp);
+  const peakWindKph = peakWind?.speed != null ? Math.round(peakWind.speed) : null;
+  const peakWindDir = peakWind ? degToCompass(peakWind.direction) : "—";
+  const peakWindDirType = peakWind?.directionType ?? "";
 
   // Alert only fires when BOTH conditions are true:
   // 1. Height jumping 75%+ within 6 hours
   // 2. Period crossing into proper groundswell (10s+)
-  // This combination means a genuine step-change, not a gradual build
   const heightGain     = currentWaveH > 0 ? (peakWaveH - currentWaveH) / currentWaveH : 1;
   const periodCrossing = peakWaveP >= 10 && currentWaveP < 10;
   const alreadyFiring  = currentWaveH >= 1.5 && currentWaveP >= 10;
@@ -161,23 +215,17 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  // Describe what changed
   const changeType = "Swell height jumping significantly AND period crossing into proper groundswell within the next few hours";
 
-  // Format peak time
-  const peakTime = new Date(peakHour.time).toLocaleString("en-AU", {
+  const peakTime = new Date(peakWave.timestamp * 1000).toLocaleString("en-AU", {
     timeZone: "Australia/Melbourne",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-    weekday: "short",
-    day: "numeric",
-    month: "short"
+    hour: "2-digit", minute: "2-digit", hour12: true,
+    weekday: "short", day: "numeric", month: "short"
   });
 
   const alertTake = await getAlertTake(
     { waveH: currentWaveH, waveP: currentWaveP, surf: currentSurf },
-    { waveH: peakWaveH, waveP: peakWaveP, windKph: peakWindKph, windDir: peakWindDir, surf: peakSurf },
+    { waveH: peakWaveH, waveP: peakWaveP, windKph: peakWindKph, windDir: peakWindDir, windDirType: peakWindDirType, surf: peakSurf },
     peakTime,
     changeType
   );
@@ -187,25 +235,17 @@ module.exports = async function handler(req, res) {
     color: 0xff6b00,
     description: alertTake ?? `Conditions jumping at Bells within the next few hours. ${currentWaveH}m now, ${peakWaveH}m @ ${peakWaveP}s by ${peakTime}.`,
     fields: [
-      {
-        name: "Right now",
-        value: `${currentWaveH}m @ ${currentWaveP}s | ${currentSurf}`,
-        inline: true
-      },
-      {
-        name: "Incoming",
-        value: `${peakWaveH}m @ ${peakWaveP}s | ${peakSurf}`,
-        inline: true
-      },
-      {
-        name: "Peaks",
-        value: peakTime,
-        inline: true
-      }
+      { name: "Right now", value: `${currentWaveH}m @ ${currentWaveP}s | ${currentSurf}`, inline: true },
+      { name: "Incoming",  value: `${peakWaveH}m @ ${peakWaveP}s | ${peakSurf}`, inline: true },
+      { name: "Peaks",     value: peakTime, inline: true }
     ],
-    footer: { text: "Stormglass API • Bells Beach, VIC • Swell Alert" },
+    footer: { text: "Surfline • Bells Beach, VIC • Swell Alert" },
     timestamp: new Date().toISOString()
   };
+
+  if (testMode) {
+    return res.status(200).json({ testMode: true, alert: true, embed, alertTake });
+  }
 
   try {
     await fetch(DISCORD_WEBHOOK, {
@@ -213,7 +253,6 @@ module.exports = async function handler(req, res) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embeds: [embed] })
     });
-
     await fetch(DISCORD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -225,14 +264,5 @@ module.exports = async function handler(req, res) {
     return res.status(502).json({ error: "Discord post failed", detail: e.message });
   }
 
-  return res.status(200).json({
-    ok: true,
-    alert: true,
-    changeType,
-    currentWaveH,
-    currentWaveP,
-    peakWaveH,
-    peakWaveP,
-    peakTime
-  });
+  return res.status(200).json({ ok: true, alert: true, changeType, currentWaveH, currentWaveP, peakWaveH, peakWaveP, peakTime });
 };
