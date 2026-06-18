@@ -288,7 +288,15 @@ module.exports = async function handler(req, res) {
 
 
   const now = new Date();
-  const testMode = req.query?.preview === "true" || req.query?.test === "true";
+
+  // Parse query params with the modern URL API to avoid the legacy url.parse() deprecation warning
+  let testMode = false;
+  try {
+    const parsedUrl = new URL(req.url, `https://${req.headers.host}`);
+    testMode = parsedUrl.searchParams.get("preview") === "true" || parsedUrl.searchParams.get("test") === "true";
+  } catch (e) {
+    testMode = false;
+  }
 
   // Fetch Surfline endpoints + Stormglass water temp in parallel
   const sgStart = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
